@@ -284,9 +284,11 @@ def test_send_slack_message_with_blockkit_edge_cases(slack_toolkit):
 
 
 def test_make_button(slack_toolkit):
-    """Test creating a button element."""
+    """Test creating a button element with text_object dict."""
+    # Use a dict for the text field to reflect the text_object helper
+    text_dict = {"type": "plain_text", "text": "Click me"}
     button = slack_toolkit.make_button(
-        text="Click me",
+        text=text_dict,
         action_id="test_button",
         value="button_value",
         style="primary",
@@ -301,9 +303,10 @@ def test_make_button(slack_toolkit):
     }
     assert button == expected
 
-    # Test without optional parameters
+    # Test without optional parameters, also using a dict for text
+    simple_text_dict = {"type": "plain_text", "text": "Simple button"}
     button_simple = slack_toolkit.make_button(
-        text="Simple button", action_id="simple_button"
+        text=simple_text_dict, action_id="simple_button"
     )
 
     expected_simple = {
@@ -316,15 +319,19 @@ def test_make_button(slack_toolkit):
 
 def test_make_select_menu(slack_toolkit):
     """Test creating a select menu element."""
-    options = [
-        slack_toolkit.make_option("Option 1", "value1"),
-        slack_toolkit.make_option("Option 2", "value2"),
-    ]
+    # Use dicts for the text field to reflect the text_object helper
+    option1 = slack_toolkit.make_option(
+        {"type": "plain_text", "text": "Option 1"}, "value1"
+    )
+    option2 = slack_toolkit.make_option(
+        {"type": "plain_text", "text": "Option 2"}, "value2"
+    )
+    options = [option1, option2]
 
     select_menu = slack_toolkit.make_select_menu(
         action_id="test_select",
         options=options,
-        placeholder="Choose an option",
+        placeholder={"type": "plain_text", "text": "Choose an option"},
     )
 
     expected = {
@@ -341,6 +348,7 @@ def test_make_select_menu(slack_toolkit):
             },
         ],
         "placeholder": {"type": "plain_text", "text": "Choose an option"},
+        "focus_on_load": False,
     }
     assert select_menu == expected
 
@@ -362,6 +370,7 @@ def test_make_select_menu(slack_toolkit):
                 "value": "value2",
             },
         ],
+        "focus_on_load": False,
     }
     assert select_menu_no_placeholder == expected_no_placeholder
 
@@ -371,13 +380,14 @@ def test_make_plain_text_input(slack_toolkit):
     text_input = slack_toolkit.make_plain_text_input(
         action_id="test_input",
         multiline=True,
-        placeholder="Enter your message",
+        placeholder={"type": "plain_text", "text": "Enter your message"},
     )
 
     expected = {
         "type": "plain_text_input",
         "action_id": "test_input",
         "multiline": True,
+        "focus_on_load": False,
         "placeholder": {"type": "plain_text", "text": "Enter your message"},
     }
     assert text_input == expected
@@ -391,6 +401,7 @@ def test_make_plain_text_input(slack_toolkit):
         "type": "plain_text_input",
         "action_id": "simple_input",
         "multiline": False,
+        "focus_on_load": False,
     }
     assert text_input_simple == expected_simple
 
@@ -399,7 +410,7 @@ def test_make_date_picker(slack_toolkit):
     """Test creating a date picker element."""
     date_picker = slack_toolkit.make_date_picker(
         action_id="test_date",
-        placeholder="Select a date",
+        placeholder={"type": "plain_text", "text": "Select a date"},
         initial_date="2024-01-15",
     )
 
@@ -408,6 +419,7 @@ def test_make_date_picker(slack_toolkit):
         "action_id": "test_date",
         "placeholder": {"type": "plain_text", "text": "Select a date"},
         "initial_date": "2024-01-15",
+        "focus_on_load": False,
     }
     assert date_picker == expected
 
@@ -416,7 +428,11 @@ def test_make_date_picker(slack_toolkit):
         action_id="simple_date"
     )
 
-    expected_simple = {"type": "datepicker", "action_id": "simple_date"}
+    expected_simple = {
+        "type": "datepicker",
+        "action_id": "simple_date",
+        "focus_on_load": False,
+    }
     assert date_picker_simple == expected_simple
 
 
@@ -425,14 +441,12 @@ def test_make_image(slack_toolkit):
     image = slack_toolkit.make_image(
         image_url="https://example.com/image.jpg",
         alt_text="Example image",
-        title="Image title",
     )
 
     expected = {
         "type": "image",
         "image_url": "https://example.com/image.jpg",
         "alt_text": "Example image",
-        "title": {"type": "plain_text", "text": "Image title"},
     }
     assert image == expected
 
@@ -449,17 +463,6 @@ def test_make_image(slack_toolkit):
     assert image_no_title == expected_no_title
 
 
-def test_make_option(slack_toolkit):
-    """Test creating an option element."""
-    option = slack_toolkit.make_option("Test Option", "test_value")
-
-    expected = {
-        "text": {"type": "plain_text", "text": "Test Option"},
-        "value": "test_value",
-    }
-    assert option == expected
-
-
 def test_helper_functions_integration(slack_toolkit):
     """Test integration of helper functions with send_slack_message."""
     with patch(
@@ -474,23 +477,32 @@ def test_helper_functions_integration(slack_toolkit):
 
         # Create blocks using helper functions
         button = slack_toolkit.make_button(
-            text="Submit", action_id="submit_btn", style="primary"
+            text={"type": "plain_text", "text": "Submit"},
+            action_id="submit_btn",
+            style="primary",
         )
 
         text_input = slack_toolkit.make_plain_text_input(
-            action_id="feedback_input", placeholder="Enter your feedback"
+            action_id="feedback_input",
+            placeholder={"type": "plain_text", "text": "Enter your feedback"},
         )
 
         options = [
-            slack_toolkit.make_option("Excellent", "excellent"),
-            slack_toolkit.make_option("Good", "good"),
-            slack_toolkit.make_option("Poor", "poor"),
+            slack_toolkit.make_option(
+                {"type": "plain_text", "text": "Excellent"}, "excellent"
+            ),
+            slack_toolkit.make_option(
+                {"type": "plain_text", "text": "Good"}, "good"
+            ),
+            slack_toolkit.make_option(
+                {"type": "plain_text", "text": "Poor"}, "poor"
+            ),
         ]
 
         select_menu = slack_toolkit.make_select_menu(
             action_id="rating_select",
             options=options,
-            placeholder="Rate your experience",
+            placeholder={"type": "plain_text", "text": "Rate your experience"},
         )
 
         # Create blocks array
