@@ -19,6 +19,8 @@ import os
 import re
 from typing import TYPE_CHECKING, Any, List, Optional
 
+from camel.logger import get_logger
+from camel.toolkits import FunctionTool
 from camel.toolkits.base import BaseToolkit
 from camel.utils import MCPServer
 
@@ -26,9 +28,6 @@ if TYPE_CHECKING:
     from ssl import SSLContext
 
     from slack_sdk import WebClient
-
-from camel.logger import get_logger
-from camel.toolkits import FunctionTool
 
 logger = get_logger(__name__)
 
@@ -53,6 +52,157 @@ class SlackToolkit(BaseToolkit):
                 (default: :obj:`None`)
         """
         super().__init__(timeout=timeout)
+
+    def _validate_text_object(
+        self, text_obj: dict, name: str = "text"
+    ) -> None:
+        r"""Validate a Slack text object structure and type.
+
+        Args:
+            text_obj (dict): The text object to validate.
+            name (str): The name of the parameter for error messages.
+
+        Raises:
+            ValueError: If the text object is not valid.
+        """
+        if (
+            not isinstance(text_obj, dict)
+            or "type" not in text_obj
+            or "text" not in text_obj
+        ):
+            raise ValueError(
+                f"The {name} parameter must be a valid text object "
+                f"with 'type' and 'text' keys."
+            )
+
+        if text_obj.get("type") not in ("plain_text", "mrkdwn"):
+            raise ValueError(
+                f"The {name} object type must be either 'plain_text' or "
+                f"'mrkdwn'."
+            )
+
+    def _validate_confirm_object(
+        self, confirm_obj: dict, name: str = "confirm"
+    ) -> None:
+        r"""Validate a Slack confirm object structure and content.
+
+        Args:
+            confirm_obj (dict): The confirm object to validate.
+            name (str): The name of the parameter for error messages.
+
+        Raises:
+            ValueError: If the confirm object is not valid.
+        """
+        if not isinstance(confirm_obj, dict):
+            raise ValueError(f"The {name} parameter must be a dictionary.")
+
+        # Check required keys
+        required_keys = ["title", "text", "confirm", "deny"]
+        missing_keys = [key for key in required_keys if key not in confirm_obj]
+        if missing_keys:
+            raise ValueError(
+                f"The {name} object must contain the following keys: "
+                f"{', '.join(required_keys)}. "
+                f"Missing: {', '.join(missing_keys)}"
+            )
+
+        # Validate text objects
+        text_validations = [
+            (confirm_obj["title"], "title", "plain_text", 100),
+            (confirm_obj["text"], "text", "plain_text", 300),
+            (confirm_obj["confirm"], "confirm", "plain_text", 30),
+            (confirm_obj["deny"], "deny", "plain_text", 30),
+        ]
+
+        for text_obj, field_name, expected_type, max_len in text_validations:
+            # Validate text object structure
+            self._validate_text_object(text_obj, f"{name} {field_name}")
+
+            # Validate text object type
+            if text_obj.get("type") != expected_type:
+                raise ValueError(
+                    f"The {name} {field_name} text object must be of type "
+                    f"'{expected_type}', not '{text_obj.get('type')}'."
+                )
+
+            # Validate text length
+            text_content = text_obj.get("text", "")
+            if len(text_content) > max_len:
+                raise ValueError(
+                    f"The {name} {field_name} cannot exceed {max_len} "
+                    f"characters."
+                )
+
+        # Validate style if present
+        if "style" in confirm_obj:
+            style = confirm_obj["style"]
+            if style not in ["primary", "danger"]:
+                raise ValueError(
+                    f"The {name} style must be 'primary' or 'danger', "
+                    f"not '{style}'."
+                )
+
+    def _validate_slack_file_object(
+        self, file_obj: dict, name: str = "slack_file"
+    ) -> None:
+        r"""Validate a Slack file object structure and content.
+
+        Args:
+            file_obj (dict): The file object to validate.
+            name (str): The name of the parameter for error messages.
+
+        Raises:
+            ValueError: If the file object is not valid.
+        """
+        if not isinstance(file_obj, dict):
+            raise ValueError(f"The {name} parameter must be a dictionary.")
+
+        # Check that at least one of 'id' or 'url' is present
+        if "id" not in file_obj and "url" not in file_obj:
+            raise ValueError(
+                f"The {name} object must contain at least one of 'id' or "
+                f"'url' keys."
+            )
+
+        # Validate file_id if present
+        if "id" in file_obj:
+            file_id = file_obj["id"]
+            if not isinstance(file_id, str):
+                raise ValueError(
+                    f"The {name} 'id' must be a string, not "
+                    f"{type(file_id).__name__}."
+                )
+            if not file_id.strip():
+                raise ValueError(
+                    f"The {name} 'id' cannot be empty or whitespace."
+                )
+
+        # Validate url if present
+        if "url" in file_obj:
+            url = file_obj["url"]
+            if not isinstance(url, str):
+                raise ValueError(
+                    f"The {name} 'url' must be a string, not "
+                    f"{type(url).__name__}."
+                )
+            if not url.strip():
+                raise ValueError(
+                    f"The {name} 'url' cannot be empty or whitespace."
+                )
+            if len(url) > 3000:
+                raise ValueError(
+                    f"The {name} 'url' cannot exceed 3000 characters."
+                )
+
+        # Check for any unexpected keys
+        valid_keys = {"id", "url"}
+        unexpected_keys = set(file_obj.keys()) - valid_keys
+        if unexpected_keys:
+            raise ValueError(
+                f"The {name} object contains unexpected keys: "
+                f"{', '.join(unexpected_keys)}. "
+                f"Valid keys are: {', '.join(valid_keys)}."
+            )
 
     def _login_slack(
         self,
@@ -80,8 +230,8 @@ class SlackToolkit(BaseToolkit):
             from slack_sdk import WebClient
         except ImportError as e:
             raise ImportError(
-                "Cannot import slack_sdk. Please install the package with \
-                `pip install slack_sdk`."
+                "Cannot import slack_sdk. Please install the package with "
+                "`pip install slack_sdk`."
             ) from e
         if not slack_token:
             slack_token = os.environ.get("SLACK_BOT_TOKEN") or os.environ.get(
@@ -242,7 +392,7 @@ class SlackToolkit(BaseToolkit):
         channel_id: str,
         file_path: Optional[str] = None,
         user: Optional[str] = None,
-        blocks: Optional[list[Any]] = None,
+        blocks: Optional[list[dict[str, Any]]] = None,
     ) -> str:
         r"""Send a message to a Slack channel.
 
@@ -272,7 +422,10 @@ class SlackToolkit(BaseToolkit):
                 return f"File sent successfully, got response: {response}"
             if user:
                 response = slack_client.chat_postEphemeral(
-                    channel=channel_id, text=message, user=user, blocks=blocks
+                    channel=channel_id,
+                    text=message,
+                    user=user,
+                    blocks=blocks,
                 )
             else:
                 response = slack_client.chat_postMessage(
@@ -310,41 +463,49 @@ class SlackToolkit(BaseToolkit):
         Raises:
             ValueError: If any of the text objects are not of the correct type.
             ValueError: If the style is not 'primary' or 'danger'.
+            ValueError: If any text field exceeds its character limit.
         """
-        if title.get("type") != "plain_text":
-            raise ValueError(
-                "The title text object must be of type 'plain_text', "
-                "not 'mrkdwn'."
-            )
-        if text.get("type") != "mrkdwn":
-            raise ValueError(
-                "The text object must be of type 'mrkdwn', not 'plain_text'."
-            )
-        if confirm_text.get("type") != "plain_text":
-            raise ValueError(
-                "The confirm_text text object must be of type 'plain_text', "
-                "not 'mrkdwn'."
-            )
-        if deny_text.get("type") != "plain_text":
-            raise ValueError(
-                "The deny_text text object must be of type 'plain_text', "
-                "not 'mrkdwn'."
-            )
+        # Type validation
+        validations = [
+            (title, "title", "plain_text"),
+            (text, "text", "plain_text"),
+            (confirm_text, "confirm_text", "plain_text"),
+            (deny_text, "deny_text", "plain_text"),
+        ]
 
-        # Validate style parameter
-        if style is not None:
-            if style not in ["primary", "danger"]:
-                raise ValueError("The style must be 'primary' or 'danger'.")
+        for field_dict, field_name, expected_type in validations:
+            if field_dict.get("type") != expected_type:
+                wrong_type = (
+                    "mrkdwn" if expected_type == "plain_text" else "plain_text"
+                )
+                raise ValueError(
+                    f"The {field_name} text object must be of type "
+                    f"'{expected_type}', not '{wrong_type}'."
+                )
 
-        confirm_obj: dict[str, Any] = {
+        # Length validation
+        for field_name, field_dict, max_len in [
+            ("title", title, 100),
+            ("text", text, 300),
+            ("confirm_text", confirm_text, 30),
+            ("deny_text", deny_text, 30),
+        ]:
+            if len(field_dict.get("text", "")) > max_len:
+                raise ValueError(
+                    f"The {field_name} cannot exceed {max_len} characters."
+                )
+
+        # Style validation
+        if style is not None and style not in ["primary", "danger"]:
+            raise ValueError("The style must be 'primary' or 'danger'.")
+
+        return {
             "title": title,
             "text": text,
             "confirm": confirm_text,
             "deny": deny_text,
+            **({"style": style} if style is not None else {}),
         }
-        if style is not None:
-            confirm_obj["style"] = style
-        return confirm_obj
 
     def make_button(
         self,
@@ -379,34 +540,44 @@ class SlackToolkit(BaseToolkit):
 
         Raises:
             ValueError: If the style is not 'primary' or 'danger'.
+            ValueError: If the action_id exceeds 255 characters.
             ValueError: If the text object is not of type 'plain_text'.
             ValueError: If the button text exceeds 75 characters.
             ValueError: If the URL exceeds 3000 characters.
             ValueError: If the accessibility_label exceeds 75 characters.
+            ValueError: If the confirm object is not a valid confirm object.
         """
-        if style is not None:
-            if style not in ["primary", "danger"]:
-                raise ValueError("The style must be 'primary' or 'danger'.")
-
+        # Validate text object and its content
         if text.get("type") != "plain_text":
             raise ValueError(
                 "The text object must be of type 'plain_text', not 'mrkdwn'."
             )
 
-        # Validate text length (max 75 characters for Slack button text)
         text_content = text.get("text", "")
         if len(text_content) > 75:
             raise ValueError("Button text cannot exceed 75 characters.")
 
-        # Validate url length (max 3000 characters)
-        if url is not None and len(url) > 3000:
-            raise ValueError("Button url cannot exceed 3000 characters.")
+        # Validate optional string parameters
+        string_validations = [
+            (action_id, 255, "action_id"),
+            (value, 2000, "Button value"),
+            (url, 3000, "Button url"),
+            (accessibility_label, 75, "Button accessibility_label"),
+        ]
 
-        # Validate accessibility_label length (max 75 characters)
-        if accessibility_label is not None and len(accessibility_label) > 75:
-            raise ValueError(
-                "Button accessibility_label cannot exceed 75 characters."
-            )
+        for param, max_length, field_name in string_validations:
+            if param is not None and len(param) > max_length:
+                raise ValueError(
+                    f"{field_name} cannot exceed {max_length} characters."
+                )
+
+        # Validate style
+        if style is not None and style not in ["primary", "danger"]:
+            raise ValueError("The style must be 'primary' or 'danger'.")
+
+        # Validate confirm object if provided
+        if confirm is not None:
+            self._validate_confirm_object(confirm, "confirm")
 
         return {
             "type": "button",
@@ -450,65 +621,37 @@ class SlackToolkit(BaseToolkit):
             ValueError: If the description object is not a valid text object.
         """
         # Validate text object
-        if (
-            not isinstance(text, dict)
-            or "type" not in text
-            or "text" not in text
-        ):
-            raise ValueError(
-                "The text parameter must be a valid text object with 'type' "
-                "and 'text' keys."
-            )
+        self._validate_text_object(text, "text")
 
-        if text.get("type") not in ("plain_text", "mrkdwn"):
-            raise ValueError(
-                "The text object type must be either 'plain_text' or "
-                "'mrkdwn'."
-            )
-
-        # Check text length
-        if len(text.get("text", "")) > 75:
-            raise ValueError("Option text cannot exceed 75 characters.")
-
-        # Check value length
-        if len(value) > 150:
-            raise ValueError("Option value cannot exceed 150 characters.")
-
-        option = {
-            "text": text,
-            "value": value,
-        }
+        # Collect all length validations in one place
+        length_validations = [
+            (text.get("text", ""), 75, "Option text"),
+            (value, 150, "Option value"),
+        ]
 
         if description:
             # Validate description object
-            if (
-                not isinstance(description, dict)
-                or "type" not in description
-                or "text" not in description
-            ):
-                raise ValueError(
-                    "The description parameter must be a valid text object "
-                    "with 'type' and 'text' keys."
-                )
-
-            if description.get("type") not in ("plain_text", "mrkdwn"):
-                raise ValueError(
-                    "The description object type must be either 'plain_text' "
-                    "or 'mrkdwn'."
-                )
-
-            if len(description.get("text", "")) > 75:
-                raise ValueError(
-                    "Option description cannot exceed 75 characters."
-                )
-            option["description"] = description
+            self._validate_text_object(description, "description")
+            length_validations.append(
+                (description.get("text", ""), 75, "Option description")
+            )
 
         if url:
-            if len(url) > 3000:
-                raise ValueError("Option url cannot exceed 3000 characters.")
-            option["url"] = url
+            length_validations.append((url, 3000, "Option url"))
 
-        return option
+        # Perform all length checks at once
+        for content, max_length, field_name in length_validations:
+            if len(content) > max_length:
+                raise ValueError(
+                    f"{field_name} cannot exceed {max_length} characters."
+                )
+
+        return {
+            "text": text,
+            "value": value,
+            **({"description": description} if description else {}),
+            **({"url": url} if url else {}),
+        }
 
     def make_option_group(
         self,
@@ -529,46 +672,46 @@ class SlackToolkit(BaseToolkit):
 
         Raises:
             ValueError: If the label text object is not of type 'plain_text'.
-            TypeError: If the options parameter is not a list of option
-                objects.
-            ValueError: If any option does not contain required keys or has
-                an invalid 'text' object.
+            ValueError: If the label text exceeds 75 characters.
+            TypeError: If the options parameter is not a list.
+            ValueError: If the options list exceeds 100 items.
+            TypeError: If any option is not a dictionary.
+            ValueError: If any option does not contain required
+                keys ('text' and 'value').
+            ValueError: If any option has an invalid 'text' object.
         """
+        # Validate label once with specific type requirement
+        self._validate_text_object(label, "label")
         if label.get("type") != "plain_text":
-            raise ValueError(
-                "The label text object must be of type 'plain_text', "
-                "not 'mrkdwn'."
-            )
+            raise ValueError("Label must be plain_text type")
 
-        # Check that options is a list
+        # Validate label length
+        if len(label.get("text", "")) > 75:
+            raise ValueError("Label text cannot exceed 75 characters")
+
+        # Validate options structure
         if not isinstance(options, list):
-            raise TypeError(
-                "The options parameter must be a list of option objects."
-            )
+            raise TypeError("Options must be a list")
 
+        if len(options) > 100:
+            raise ValueError("Options list cannot exceed 100 items")
+
+        # Validate each option
         for idx, option in enumerate(options):
-            # Check that each option is a dict
             if not isinstance(option, dict):
-                raise TypeError(f"Option at index {idx} is not a dictionary.")
-            # Check required keys
+                raise TypeError(f"Option at index {idx} must be a dictionary")
+
             if "text" not in option or "value" not in option:
                 raise ValueError(
                     f"Option at index {idx} must contain 'text' and "
                     "'value' keys."
                 )
             # Check text object
-            if (
-                not isinstance(option["text"], dict)
-                or "type" not in option["text"]
-            ):
-                raise ValueError(
-                    f"Option at index {idx} has an invalid 'text' object."
-                )
+            self._validate_text_object(
+                option["text"], f"option at index {idx} text"
+            )
 
-        return {
-            "label": label,
-            "options": options,
-        }
+        return {"label": label, "options": options}
 
     def make_select_menu(
         self,
@@ -608,79 +751,68 @@ class SlackToolkit(BaseToolkit):
             ValueError: If action_id exceeds 255 characters.
             ValueError: If options or option_groups exceed 100 items.
             ValueError: If placeholder is not a plain_text object or exceeds
-                100 characters.
+                150 characters.
             ValueError: If initial_option is not a valid option object.
+            ValueError: If initial_option does not exist in the provided
+                options list.
+            ValueError: If confirm object is not a valid confirm object.
         """
 
-        if action_id is not None and len(action_id) > 255:
-            raise ValueError("The action_id cannot exceed 255 characters.")
-
-        if options is not None and option_groups is not None:
+        if options and option_groups:
             raise ValueError(
                 "You must provide either 'options' or 'option_groups', "
                 "not both."
             )
 
-        if options is not None:
-            if len(options) > 100:
-                raise ValueError("The options list cannot exceed 100 options.")
-
-        if option_groups is not None:
-            if len(option_groups) > 100:
-                raise ValueError(
-                    "The option_groups list cannot exceed 100 option groups."
-                )
+        if (
+            (options and len(options) > 100)
+            or (option_groups and len(option_groups) > 100)
+            or (action_id and len(action_id) > 255)
+        ):
+            raise ValueError(
+                "The options or option_groups list cannot exceed 100 items "
+                "or action_id cannot exceed 255 characters."
+            )
 
         # Validate initial_option if provided
-        if initial_option is not None:
-            if not isinstance(initial_option, dict):
-                raise ValueError("The initial_option must be a dictionary.")
-
-            if "text" not in initial_option or "value" not in initial_option:
-                raise ValueError(
-                    "The initial_option must contain 'text' and 'value' keys."
-                )
-
-            # Validate the text object within initial_option
-            text_obj = initial_option.get("text")
-            if (
-                not isinstance(text_obj, dict)
-                or "type" not in text_obj
-                or "text" not in text_obj
+        if initial_option:
+            if not isinstance(initial_option, dict) or not all(
+                k in initial_option for k in ("text", "value")
             ):
                 raise ValueError(
-                    "The initial_option text object must be a valid text "
-                    "object with 'type' and 'text' keys."
+                    "The initial_option must be a dictionary with 'text' "
+                    "and 'value' keys."
                 )
 
-            if text_obj.get("type") not in ("plain_text", "mrkdwn"):
-                raise ValueError(
-                    "The initial_option text object type must be either "
-                    "'plain_text' or 'mrkdwn'."
-                )
+            text_obj = initial_option.get("text")
+            if text_obj is not None:
+                self._validate_text_object(text_obj, "initial_option text")
 
             # Check if initial_option exists in the provided options
-            # (if options are provided)
-            if options is not None:
-                initial_value = initial_option.get("value")
-                if not any(
-                    opt.get("value") == initial_value for opt in options
-                ):
-                    raise ValueError(
-                        "The initial_option must exist in the provided "
-                        "options list."
-                    )
+            if options and not any(
+                opt.get("value") == initial_option.get("value")
+                for opt in options
+            ):
+                raise ValueError(
+                    "The initial_option must exist in the provided "
+                    "options list."
+                )
 
-        if placeholder is not None:
+        if placeholder:
+            self._validate_text_object(placeholder, "placeholder")
             if placeholder.get("type") != "plain_text":
                 raise ValueError(
-                    "The placeholder text object must be of type "
-                    "'plain_text', not 'mrkdwn'."
+                    "The placeholder must be a plain_text object, not "
+                    "'mrkdwn'."
                 )
-            if len(placeholder.get("text", "")) > 100:
+            if len(placeholder.get("text", "")) > 150:
                 raise ValueError(
-                    "The placeholder text cannot exceed 100 characters."
+                    "The placeholder text cannot exceed 150 characters."
                 )
+
+        # Validate confirm object if provided
+        if confirm is not None:
+            self._validate_confirm_object(confirm, "confirm")
 
         select_menu = {
             "type": "static_select",
@@ -724,6 +856,10 @@ class SlackToolkit(BaseToolkit):
 
         Returns:
             dict: A dictionary representing a Slack Block Kit text object.
+
+        Raises:
+            ValueError: If text_type is not 'plain_text' or 'mrkdwn'.
+            ValueError: If text length is not between 1 and 3000 characters.
         """
 
         if text_type not in ("plain_text", "mrkdwn"):
@@ -736,16 +872,20 @@ class SlackToolkit(BaseToolkit):
                 "The text length must be between 1 and 3000 characters."
             )
 
-        obj: dict[str, Any] = {
+        return {
             "type": text_type,
             "text": text,
+            **(
+                {"emoji": emoji}
+                if text_type == "plain_text" and emoji is not None
+                else {}
+            ),
+            **(
+                {"verbatim": verbatim}
+                if text_type == "mrkdwn" and verbatim is not None
+                else {}
+            ),
         }
-        if text_type == "plain_text" and emoji is not None:
-            obj["emoji"] = emoji
-        if text_type == "mrkdwn" and verbatim is not None:
-            obj["verbatim"] = verbatim
-
-        return obj
 
     def make_plain_text_input(
         self,
@@ -783,34 +923,37 @@ class SlackToolkit(BaseToolkit):
                 element.
 
         Raises:
-            ValueError: If any of the provided arguments are invalid.
+            ValueError: If action_id exceeds 255 characters.
+            ValueError: If placeholder is not a plain_text object or
+                exceeds 150 characters.
+            ValueError: If min_length is not between 0 and 3000 (inclusive).
+            ValueError: If max_length is not between 1 and 3000 (inclusive).
         """
 
         if action_id is not None and len(action_id) > 255:
             raise ValueError("The action_id cannot exceed 255 characters.")
 
         if placeholder is not None:
+            self._validate_text_object(placeholder, "placeholder")
             if placeholder.get("type") != "plain_text":
                 raise ValueError(
-                    "The placeholder text object must be of type "
-                    "'plain_text', not 'mrkdwn'."
+                    "The placeholder must be a plain_text object, not "
+                    "'mrkdwn'."
                 )
             if len(placeholder.get("text", "")) > 150:
                 raise ValueError(
                     "The placeholder text cannot exceed 150 characters."
                 )
 
-        if min_length is not None:
-            if not (0 <= min_length <= 3000):
-                raise ValueError(
-                    "The min_length must be between 0 and 3000 " "(inclusive)."
-                )
+        if min_length is not None and not (0 <= min_length <= 3000):
+            raise ValueError(
+                "The min_length must be between 0 and 3000 (inclusive)."
+            )
 
-        if max_length is not None:
-            if not (1 <= max_length <= 3000):
-                raise ValueError(
-                    "The max_length must be between 1 and 3000 " "(inclusive)."
-                )
+        if max_length is not None and not (1 <= max_length <= 3000):
+            raise ValueError(
+                "The max_length must be between 1 and 3000 (inclusive)."
+            )
 
         return {
             "type": "plain_text_input",
@@ -861,16 +1004,21 @@ class SlackToolkit(BaseToolkit):
                 element.
 
         Raises:
-            ValueError: If any of the provided arguments are invalid.
+            ValueError: If action_id exceeds 255 characters.
+            ValueError: If placeholder is not a plain_text object or
+                exceeds 150 characters.
+            ValueError: If initial_date is not in YYYY-MM-DD format.
+            ValueError: If confirm object is not a valid confirm object.
         """
         if action_id is not None and len(action_id) > 255:
             raise ValueError("The action_id cannot exceed 255 characters.")
 
         if placeholder is not None:
+            self._validate_text_object(placeholder, "placeholder")
             if placeholder.get("type") != "plain_text":
                 raise ValueError(
-                    "The placeholder text object must be of type "
-                    "'plain_text', not 'mrkdwn'."
+                    "The placeholder must be a plain_text object, not "
+                    "'mrkdwn'."
                 )
             if len(placeholder.get("text", "")) > 150:
                 raise ValueError(
@@ -878,10 +1026,14 @@ class SlackToolkit(BaseToolkit):
                 )
 
         if initial_date is not None:
-            if not re.match(r'^\d{4}-\d{2}-\d{2}$', initial_date):
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", initial_date):
                 raise ValueError(
                     "The initial_date must be in YYYY-MM-DD format."
                 )
+
+        # Validate confirm object if provided
+        if confirm is not None:
+            self._validate_confirm_object(confirm, "confirm")
 
         return {
             "type": "datepicker",
@@ -910,6 +1062,7 @@ class SlackToolkit(BaseToolkit):
 
         Returns:
             dict: A dictionary representing a Slack file object.
+
         """
         return {
             **({"id": file_id} if file_id else {}),
@@ -920,7 +1073,7 @@ class SlackToolkit(BaseToolkit):
         self,
         alt_text: str,
         image_url: Optional[str] = None,
-        slack_file: Optional[str] = None,
+        slack_file: Optional[dict] = None,
     ) -> dict:
         r"""Creates an image block for Slack Block Kit.
 
@@ -928,24 +1081,26 @@ class SlackToolkit(BaseToolkit):
             alt_text (str): Alternative text for accessibility.
             image_url (Optional[str], optional): The URL of the image to
                 display. Defaults to :obj:`None`.
-            slack_file (Optional[str], optional): The Slack file ID
-                associated with the image. Defaults to :obj:`None`.
+            slack_file (Optional[dict], optional): The Slack file object
+                associated with the image. Must be a dictionary with 'id' or
+                'url' keys. Defaults to :obj:`None`.
 
         Returns:
             dict: A dictionary representing a Slack Block Kit image element.
 
         Raises:
             ValueError: If both image_url and slack_file are provided.
-            ValueError: If image_url exceeds 3000 characters.
+            ValueError: If slack_file is not a valid Slack file object.
         """
-        if image_url is not None and len(image_url) > 3000:
-            raise ValueError("Image URL cannot exceed 3000 characters.")
-
         if image_url is not None and slack_file is not None:
             raise ValueError(
                 "Only one of image_url or slack_file can be provided, "
                 "not both."
             )
+
+        # Validate slack_file object if provided
+        if slack_file is not None:
+            self._validate_slack_file_object(slack_file, "slack_file")
 
         return {
             "type": "image",
